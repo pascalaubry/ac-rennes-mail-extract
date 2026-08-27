@@ -30,12 +30,13 @@ import re
 import shutil
 import sys
 import tarfile
-import time
 from email.header import decode_header
 from email.parser import BytesHeaderParser
 from email.policy import compat32
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+
+from progress_bar import ProgressBar, human_bytes
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -240,95 +241,20 @@ def is_mbox_file(path: Path) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# progress bar
-# --------------------------------------------------------------------------- #
-def _human_bytes(n: float) -> str:
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if n < 1024 or unit == "TiB":
-            return f"{n:.0f} B" if unit == "B" else f"{n:.1f} {unit}"
-        n /= 1024
-    return f"{n:.1f} TiB"
-
-
-class ProgressBar:
-    """A single-line byte-based progress bar rendered on stderr."""
-
-    def __init__(self, total: int, enabled: bool, width: int = 30):
-        self.total = total
-        self.enabled = enabled and total > 0
-        self.width = width
-        self.done = 0
-        self.msgs = 0
-        self.label = ""
-        self._last = 0.0
-        self._prevlen = 0
-
-    def update(self, *, add: int = 0, msgs_add: int = 0, done: int | None = None,
-               label: str | None = None, force: bool = False) -> None:
-        if not self.enabled:
-            return
-        self.done = done if done is not None else self.done + add
-        self.msgs += msgs_add
-        if label is not None:
-            self.label = label
-        now = time.monotonic()
-        if force or now - self._last >= 0.15:
-            self._last = now
-            self._render()
-
-    def _render(self) -> None:
-        frac = min(self.done / self.total, 1.0) if self.total else 1.0
-        filled = round(frac * self.width)
-        bar = "#" * filled + "-" * (self.width - filled)
-        line = (f"[{bar}] {frac * 100:5.1f}%  "
-                f"{_human_bytes(self.done)}/{_human_bytes(self.total)}  "
-                f"{self.msgs:,} msg  {self.label}")
-        cols = shutil.get_terminal_size((80, 20)).columns
-        line = line[:cols - 1]
-        pad = max(0, self._prevlen - len(line))
-        sys.stderr.write("\r" + line + " " * pad)
-        sys.stderr.flush()
-        self._prevlen = len(line)
-
-    def log(self, text: str) -> None:
-        """Print a line without clobbering the bar."""
-        if self.enabled and self._prevlen:
-            sys.stderr.write("\r" + " " * self._prevlen + "\r")
-            sys.stderr.flush()
-            self._prevlen = 0
-        print(text)
-        if self.enabled:
-            self._render()
-
-    def close(self) -> None:
-        if self.enabled and self._prevlen:
-            self.update(force=True)
-            sys.stderr.write("\n")
-            sys.stderr.flush()
-            self._prevlen = 0
-
-
-# --------------------------------------------------------------------------- #
 # driver
 # --------------------------------------------------------------------------- #
 def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
-            skip_extract: bool, limit: int | None,
-            show_progress: bool, keep_tmp: bool) -> int:
+            limit: int | None) -> int:
     extract_root = tmp_dir / base
-    if skip_extract:
-        print(f"--skip-extract: using existing {extract_root}")
-        if not extract_root.is_dir():
-            raise FileNotFoundError(f"{extract_root} does not exist")
-    else:
-        archive = find_archive(base, archives_dir)
-        print(f"archive: {archive}")
-        extract_archive(archive, extract_root)
+    archive = find_archive(base, archives_dir)
+    print(f"archive: {archive}")
+    extract_archive(archive, extract_root)
 
     mail_root = find_mail_root(extract_root)
     mbox_files = sorted(p for p in mail_root.rglob("*") if is_mbox_file(p))
     total_bytes = sum(p.stat().st_size for p in mbox_files)
     print(f"mail root: {mail_root}")
-    print(f"found {len(mbox_files)} mbox file(s), {_human_bytes(total_bytes)} to read")
+    print(f"found {len(mbox_files)} mbox file(s), {human_bytes(total_bytes)} to read")
 
     base_dir = output_dir / base
     if base_dir.exists():
@@ -338,12 +264,7 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
     index_path = base_dir / "index.csv"
     made_dirs: set[Path] = set()
 
-    # Once extracted, the mbox files are just a scratch copy: delete each one as
-    # soon as it is fully processed to keep peak disk use down. Not when the tmp
-    # tree was supplied by the user (--skip-extract) or --keep-tmp is set.
-    delete_tmp = not skip_extract and not keep_tmp
-
-    bar = ProgressBar(total_bytes, enabled=show_progress)
+    bar = ProgressBar(total_bytes)
     total = 0
     no_date = 0
     with index_path.open("w", newline="", encoding="utf-8") as index_fh:
@@ -391,19 +312,19 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
                 if limit is not None and total >= limit:
                     bar.close()
                     print(f"  {folder_posix}: {count} message(s) [limit reached]")
+                    shutil.rmtree(extract_root, ignore_errors=True)
+                    print(f"removed scratch tree: {extract_root}")
                     print(f"\ndone: {total} message(s) -> {base_dir} "
                           f"({no_date} without a usable date)")
                     return 0
             file_base += size  # self-corrects any per-file drift
-            if delete_tmp:
-                mbox.unlink()
+            mbox.unlink()  # done with this file, reclaim the space now
             bar.update(done=file_base, label=folder_posix)
             bar.log(f"  {folder_posix}: {count} message(s)")
 
     bar.close()
-    if delete_tmp:
-        shutil.rmtree(extract_root, ignore_errors=True)
-        print(f"removed scratch tree: {extract_root}")
+    shutil.rmtree(extract_root, ignore_errors=True)
+    print(f"removed scratch tree: {extract_root}")
     print(f"\ndone: {total} message(s) -> {base_dir} "
           f"({no_date} without a usable date)")
     return 0
@@ -421,16 +342,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="extraction directory (default: ./tmp)")
     p.add_argument("--output-dir", type=Path, default=ROOT / "output",
                    help="output directory (default: ./output)")
-    p.add_argument("--skip-extract", action="store_true",
-                   help="reuse an existing tmp/<base> without touching the archive")
-    p.add_argument("--keep-tmp", action="store_true",
-                   help="keep tmp/<base>; by default each mbox file is deleted "
-                        "once processed and the tree is removed at the end")
     p.add_argument("--limit", type=int, default=None,
                    help="stop after N messages (for testing)")
-    p.add_argument("--progress", choices=("auto", "on", "off"), default="auto",
-                   help="show the read progress bar (default: auto = when stderr "
-                        "is a terminal)")
     return p
 
 
@@ -438,13 +351,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         base = choose_base(args.archives_dir)
-        show_progress = {"on": True, "off": False}.get(
-            args.progress, sys.stderr.isatty()
-        )
         return process(
-            base, args.archives_dir, args.tmp_dir, args.output_dir,
-            args.skip_extract, args.limit, show_progress,
-            args.keep_tmp,
+            base, args.archives_dir, args.tmp_dir, args.output_dir, args.limit,
         )
     except (FileNotFoundError, tarfile.TarError) as exc:
         print(f"error: {exc}", file=sys.stderr)
