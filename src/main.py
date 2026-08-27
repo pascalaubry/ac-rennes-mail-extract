@@ -7,7 +7,7 @@ The script:
 
 1. lists the archives in ``archives/`` and asks which one to process (if there
    is only one, it is used without asking); its name gives the mailbox base;
-2. unpacks it into ``tmp/<base>/`` (skipped if already present, unless --force);
+2. unpacks it into ``tmp/<base>/`` (any previous extraction is wiped first);
    each unpacked mbox file is deleted once processed, and the tree removed at
    the end, unless --keep-tmp / --skip-extract;
 3. walks every mbox file in the extracted tree (folder files *and* the
@@ -110,13 +110,10 @@ def find_archive(base: str, archives_dir: Path) -> Path:
     )
 
 
-def extract_archive(archive: Path, dest: Path, force: bool) -> None:
-    if dest.exists() and any(dest.iterdir()):
-        if not force:
-            print(f"  {dest} already populated - skipping extraction "
-                  f"(use --force to redo)")
-            return
-        print(f"  --force: re-extracting into existing {dest}")
+def extract_archive(archive: Path, dest: Path) -> None:
+    if dest.exists():
+        print(f"  clearing previous extraction: {dest}")
+        shutil.rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)
     print(f"  extracting {archive.name} -> {dest} ...")
     mode = "r:gz" if archive.suffix != ".tar" else "r:"
@@ -315,7 +312,7 @@ class ProgressBar:
 # driver
 # --------------------------------------------------------------------------- #
 def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
-            force: bool, skip_extract: bool, limit: int | None,
+            skip_extract: bool, limit: int | None,
             show_progress: bool, keep_tmp: bool) -> int:
     extract_root = tmp_dir / base
     if skip_extract:
@@ -325,7 +322,7 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
     else:
         archive = find_archive(base, archives_dir)
         print(f"archive: {archive}")
-        extract_archive(archive, extract_root, force)
+        extract_archive(archive, extract_root)
 
     mail_root = find_mail_root(extract_root)
     mbox_files = sorted(p for p in mail_root.rglob("*") if is_mbox_file(p))
@@ -424,8 +421,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="extraction directory (default: ./tmp)")
     p.add_argument("--output-dir", type=Path, default=ROOT / "output",
                    help="output directory (default: ./output)")
-    p.add_argument("--force", action="store_true",
-                   help="re-extract even if tmp/<base> is already populated")
     p.add_argument("--skip-extract", action="store_true",
                    help="reuse an existing tmp/<base> without touching the archive")
     p.add_argument("--keep-tmp", action="store_true",
@@ -448,7 +443,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return process(
             base, args.archives_dir, args.tmp_dir, args.output_dir,
-            args.force, args.skip_extract, args.limit, show_progress,
+            args.skip_extract, args.limit, show_progress,
             args.keep_tmp,
         )
     except (FileNotFoundError, tarfile.TarError) as exc:
