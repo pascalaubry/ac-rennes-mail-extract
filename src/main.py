@@ -116,7 +116,7 @@ def extract_archive(archive: Path, dest: Path) -> None:
         print(f"  clearing previous extraction: {dest}")
         shutil.rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)
-    print(f"  extracting {archive.name} -> {dest} ...")
+    print(f"  extracting {archive.name} -> {dest} ...", flush=True)
     # Stream mode ("r|...") so the wrapper sees every compressed byte tarfile
     # reads; progress is measured against the archive's on-disk size.
     mode = "r|" if archive.suffix == ".tar" else "r|gz"
@@ -257,16 +257,17 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
     print(f"archive: {archive}")
     extract_archive(archive, extract_root)
 
+    base_dir = output_dir / base
+    if base_dir.exists():
+        print(f"clearing previous output: {base_dir}")
+        shutil.rmtree(base_dir)
+
     mail_root = find_mail_root(extract_root)
     mbox_files = sorted(p for p in mail_root.rglob("*") if is_mbox_file(p))
     total_bytes = sum(p.stat().st_size for p in mbox_files)
     print(f"mail root: {mail_root}")
     print(f"found {len(mbox_files)} mbox file(s), {human_bytes(total_bytes)} to read")
 
-    base_dir = output_dir / base
-    if base_dir.exists():
-        print(f"clearing previous output: {base_dir}")
-        shutil.rmtree(base_dir)
     base_dir.mkdir(parents=True, exist_ok=True)
     index_path = base_dir / "index.csv"
     made_dirs: set[Path] = set()
@@ -327,8 +328,7 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
             file_base += size  # self-corrects any per-file drift
             mbox.unlink()  # done with this file, reclaim the space now
             bar.update(done=file_base, label=folder_posix)
-            suffix = " [limit reached]" if hit_limit else ""
-            bar.log(f"  {folder_posix}: {count} message(s){suffix}")
+            #bar.log(f"  {folder_posix}: {count} message(s){" [limit reached]" if hit_limit else ""}")
 
     bar.close()
     # every mbox generator is now closed -> the tree can be removed on Windows too
@@ -365,6 +365,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     except (FileNotFoundError, tarfile.TarError) as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print(f"stop")
         return 1
 
 
