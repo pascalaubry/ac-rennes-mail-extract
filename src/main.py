@@ -1,12 +1,12 @@
 """Extract a personal mailbox archive into a per-year tree of messages.
 
 Usage:
-    python src/main.py [<base>] [options]
+    python src/main.py [options]
 
-Given a mailbox base name (e.g. ``paubry``) the script:
+The script:
 
-1. locates ``archives/<base>.tgz`` (``.tar.gz`` also accepted); when ``<base>``
-   is omitted it lists the archives in ``archives/`` and asks which one to use;
+1. lists the archives in ``archives/`` and asks which one to process (if there
+   is only one, it is used without asking); its name gives the mailbox base;
 2. unpacks it into ``tmp/<base>/`` (skipped if already present, unless --force);
    each unpacked mbox file is deleted once processed, and the tree removed at
    the end, unless --keep-tmp / --skip-extract;
@@ -418,9 +418,6 @@ def build_parser() -> argparse.ArgumentParser:
         description="Extract a mailbox archive into .eml files, grouped by "
                     "message year then mirroring the archive folder tree.",
     )
-    p.add_argument("base", nargs="?",
-                   help="mailbox base name, e.g. paubry "
-                        "(if omitted, pick from the archives in --archives-dir)")
     p.add_argument("--archives-dir", type=Path, default=ROOT / "archives",
                    help="directory holding <base>.tgz (default: ./archives)")
     p.add_argument("--tmp-dir", type=Path, default=ROOT / "tmp",
@@ -445,7 +442,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        base = args.base or choose_base(args.archives_dir)
+        base = choose_base(args.archives_dir)
         show_progress = {"on": True, "off": False}.get(
             args.progress, sys.stderr.isatty()
         )
