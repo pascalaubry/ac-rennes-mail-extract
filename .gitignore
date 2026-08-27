@@ -1,0 +1,11 @@
+# input fixtures and generated data - never commit
+/archives/
+/tmp/
+/output/
+
+# tooling
+.idea/
+__pycache__/
+*.pyc
+.venv-*/
+CLAUDE.md
