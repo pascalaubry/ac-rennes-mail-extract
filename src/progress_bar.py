@@ -18,10 +18,11 @@ def human_bytes(n: float) -> str:
 class ProgressBar:
     """A single-line byte-based progress bar rendered on stderr."""
 
-    def __init__(self, total: int, width: int = 30):
+    def __init__(self, total: int, width: int = 30, show_count: bool = True):
         self.total = total
         self.enabled = total > 0
         self.width = width
+        self.show_count = show_count
         self.done = 0
         self.msgs = 0
         self.label = ""
@@ -45,9 +46,10 @@ class ProgressBar:
         frac = min(self.done / self.total, 1.0) if self.total else 1.0
         filled = round(frac * self.width)
         bar = "#" * filled + "-" * (self.width - filled)
+        count = f"{self.msgs:,} msg  " if self.show_count else ""
         line = (f"[{bar}] {frac * 100:5.1f}%  "
                 f"{human_bytes(self.done)}/{human_bytes(self.total)}  "
-                f"{self.msgs:,} msg  {self.label}")
+                f"{count}{self.label}")
         cols = shutil.get_terminal_size((80, 20)).columns
         line = line[:cols - 1]
         pad = max(0, self._prevlen - len(line))
@@ -71,3 +73,21 @@ class ProgressBar:
             sys.stderr.write("\n")
             sys.stderr.flush()
             self._prevlen = 0
+
+
+class CountingStream:
+    """A read-only pass-through over a binary stream that ticks a ProgressBar
+    with the number of bytes read (e.g. wrapping the compressed archive file
+    while tarfile streams through it)."""
+
+    def __init__(self, fh, bar: ProgressBar):
+        self._fh = fh
+        self._bar = bar
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._fh.read(size)
+        self._bar.update(add=len(chunk))
+        return chunk
+
+    def close(self) -> None:
+        self._fh.close()

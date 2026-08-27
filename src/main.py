@@ -8,8 +8,8 @@ The script:
 1. lists the archives in ``archives/`` and asks which one to process (if there
    is only one, it is used without asking); its name gives the mailbox base;
 2. unpacks it into ``tmp/<base>/`` (any previous extraction is wiped first);
-   each unpacked mbox file is deleted once processed, and the tree removed at
-   the end, unless --keep-tmp / --skip-extract;
+   each unpacked mbox file is deleted once processed and the whole ``tmp/<base>``
+   tree is removed at the end;
 3. walks every mbox file in the extracted tree (folder files *and* the
    non-empty ``<Name>.msg`` files), and for every message reads its ``Date:``
    and ``Subject:`` headers;
@@ -36,7 +36,7 @@ from email.policy import compat32
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-from progress_bar import ProgressBar, human_bytes
+from progress_bar import CountingStream, ProgressBar, human_bytes
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -117,10 +117,17 @@ def extract_archive(archive: Path, dest: Path) -> None:
         shutil.rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)
     print(f"  extracting {archive.name} -> {dest} ...")
-    mode = "r:gz" if archive.suffix != ".tar" else "r:"
-    with tarfile.open(archive, mode) as tar:
-        # filter="data" (3.12+) blocks absolute paths, traversal and specials.
-        tar.extractall(dest, filter="data")
+    # Stream mode ("r|...") so the wrapper sees every compressed byte tarfile
+    # reads; progress is measured against the archive's on-disk size.
+    mode = "r|" if archive.suffix == ".tar" else "r|gz"
+    bar = ProgressBar(archive.stat().st_size, show_count=False)
+    bar.update(label=archive.name, force=True)
+    with archive.open("rb") as raw:
+        stream = CountingStream(raw, bar)
+        with tarfile.open(fileobj=stream, mode=mode) as tar:
+            # filter="data" (3.12+) blocks absolute paths, traversal and specials.
+            tar.extractall(dest, filter="data")
+    bar.close()
     print("  extraction done")
 
 
@@ -272,14 +279,18 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
         writer.writerow(["folder", "year", "date", "subject", "output_file"])
 
         file_base = 0  # bytes of the mbox files fully processed so far
+        hit_limit = False
         for mbox in mbox_files:
+            if hit_limit:
+                break
             folder = logical_folder(mbox, mail_root)
             folder_posix = folder.as_posix()
             size = mbox.stat().st_size
             bar.update(done=file_base, label=folder_posix, force=True)
             count = 0
             in_file = 0
-            for raw in iter_mbox_messages(mbox):
+            messages = iter_mbox_messages(mbox)
+            for raw in messages:
                 when, subject = message_meta(raw)
                 if when is None:
                     no_date += 1
@@ -310,19 +321,17 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
                 in_file += len(raw)
                 bar.update(done=file_base + in_file, msgs_add=1)
                 if limit is not None and total >= limit:
-                    bar.close()
-                    print(f"  {folder_posix}: {count} message(s) [limit reached]")
-                    shutil.rmtree(extract_root, ignore_errors=True)
-                    print(f"removed scratch tree: {extract_root}")
-                    print(f"\ndone: {total} message(s) -> {base_dir} "
-                          f"({no_date} without a usable date)")
-                    return 0
+                    hit_limit = True
+                    break
+            messages.close()  # release the file handle (no-op if exhausted)
             file_base += size  # self-corrects any per-file drift
             mbox.unlink()  # done with this file, reclaim the space now
             bar.update(done=file_base, label=folder_posix)
-            bar.log(f"  {folder_posix}: {count} message(s)")
+            suffix = " [limit reached]" if hit_limit else ""
+            bar.log(f"  {folder_posix}: {count} message(s){suffix}")
 
     bar.close()
+    # every mbox generator is now closed -> the tree can be removed on Windows too
     shutil.rmtree(extract_root, ignore_errors=True)
     print(f"removed scratch tree: {extract_root}")
     print(f"\ndone: {total} message(s) -> {base_dir} "
