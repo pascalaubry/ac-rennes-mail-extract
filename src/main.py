@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import io
 import os
 import re
 import shutil
@@ -35,11 +36,14 @@ import sys
 import tarfile
 import time
 import zipfile
+from collections.abc import Callable, Generator
 from email.header import decode_header
+from email.message import Message
 from email.parser import BytesHeaderParser
 from email.policy import compat32
 from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
+from typing import Literal
 
 from progress_bar import CountingStream, ProgressBar
 
@@ -119,7 +123,7 @@ def find_archive(base: str, archives_dir: Path) -> Path:
 # --------------------------------------------------------------------------- #
 # mbox parsing
 # --------------------------------------------------------------------------- #
-def iter_mbox_messages(path: Path):
+def iter_mbox_messages(path: Path) -> Generator[bytes, None, None]:
     """Yield the raw bytes of each message in an mbox file."""
     lines: list[bytes] = []
     prev_blank = True  # start of file counts as "after a blank line"
@@ -193,7 +197,7 @@ def _envelope_datetime(raw: bytes) -> dt.datetime | None:
     return None
 
 
-def _addresses(headers, name: str) -> str:
+def _addresses(headers: Message, name: str) -> str:
     """Comma-separated, de-duplicated address list from the given header(s)."""
     seen: list[str] = []
     for _name, addr in getaddresses(headers.get_all(name, [])):
@@ -279,7 +283,9 @@ def is_mbox_file(path: Path) -> bool:
 # --------------------------------------------------------------------------- #
 # filesystem helpers
 # --------------------------------------------------------------------------- #
-def _clear_readonly(func, path, _exc):
+def _clear_readonly(
+    func: Callable[[str], object], path: str, _exc: BaseException
+) -> None:
     """``rmtree`` error handler: drop the read-only bit and retry the failed op.
 
     On Windows ``os.unlink`` / ``os.rmdir`` raise ``PermissionError`` on a
@@ -365,7 +371,7 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
     index_path = base_dir / "index.csv"
     made_dirs: set[Path] = set()
 
-    mode = "r|" if archive.suffix == ".tar" else "r|gz"
+    mode: Literal["r|", "r|gz"] = "r|" if archive.suffix == ".tar" else "r|gz"
     bar = ProgressBar(archive.stat().st_size)  # measured against compressed size
     total = 0
     no_date = 0
@@ -468,10 +474,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     # Line-buffer stdout so every print() is flushed on its trailing newline
     # (progress runs on stderr; keep the two interleaving in real time).
-    try:
+    if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(line_buffering=True)
-    except (AttributeError, ValueError):
-        pass
     args = build_parser().parse_args(argv)
     limit = args.limit or None  # 0 (or omitted) means "no limit"
     try:

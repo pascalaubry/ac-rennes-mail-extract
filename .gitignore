@@ -8,4 +8,8 @@
 __pycache__/
 *.pyc
 .venv-*/
+.mypy_cache/
+*.egg-info/
+/build/
+/dist/
 CLAUDE.md

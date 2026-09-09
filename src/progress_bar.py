@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import shutil
 import sys
 import time
+from typing import IO, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from _typeshed import WriteableBuffer
 
 
 def human_bytes(n: float) -> str:
@@ -98,19 +103,33 @@ class ProgressBar:
             self._prevlen = 0
 
 
-class CountingStream:
+class CountingStream(io.RawIOBase):
     """A read-only pass-through over a binary stream that ticks a ProgressBar
     with the number of bytes read (e.g. wrapping the compressed archive file
-    while tarfile streams through it)."""
+    while tarfile streams through it).
 
-    def __init__(self, fh, bar: ProgressBar):
+    Subclassing ``io.RawIOBase`` makes this a genuine binary file object, so it
+    is accepted wherever an ``IO[bytes]`` is expected (``tarfile.open``'s
+    ``fileobj``). ``RawIOBase`` implements ``read()`` on top of ``readinto()``.
+    """
+
+    def __init__(self, fh: IO[bytes], bar: ProgressBar) -> None:
+        super().__init__()
         self._fh = fh
         self._bar = bar
 
-    def read(self, size: int = -1) -> bytes:
-        chunk = self._fh.read(size)
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: WriteableBuffer) -> int:
+        view = memoryview(buffer).cast("B")
+        chunk = self._fh.read(len(view))
+        view[: len(chunk)] = chunk
         self._bar.update(add=len(chunk))
-        return chunk
+        return len(chunk)
 
     def close(self) -> None:
-        self._fh.close()
+        try:
+            self._fh.close()
+        finally:
+            super().close()
