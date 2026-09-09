@@ -132,18 +132,47 @@ def iter_mbox_messages(path: Path):
         yield b"".join(lines)
 
 
+# Charsets that legacy French mail servers routinely mislabel: the header
+# announces one of these but the bytes are really UTF-8 (this is what turns
+# "Valérie" into "ValÃ©rie"). UTF-8 decoding is strict, so trying it first for
+# these almost never produces a false positive.
+_MISLABELLED_AS = frozenset({
+    "", "ascii", "us-ascii", "iso-8859-1", "iso8859-1", "latin-1", "latin1",
+    "iso-8859-15", "iso8859-15", "windows-1252", "cp1252",
+})
+
+
+def _decode_bytes(data: bytes, declared: str | None) -> str:
+    """Decode header bytes, working around a charset label that is wrong."""
+    declared = (declared or "").strip().lower()
+    order = (["utf-8", declared] if declared in _MISLABELLED_AS
+             else [declared, "utf-8"])
+    for enc in (*order, "cp1252", "latin-1"):  # latin-1 never raises
+        if not enc:
+            continue
+        try:
+            return data.decode(enc)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
 def _decode_subject(raw_value: str | None) -> str:
     if not raw_value:
         return ""
     out: list[str] = []
     for text, enc in decode_header(raw_value):
         if isinstance(text, bytes):
-            try:
-                out.append(text.decode(enc or "utf-8", errors="replace"))
-            except LookupError:
-                out.append(text.decode("utf-8", errors="replace"))
+            out.append(_decode_bytes(text, enc))
         else:
-            out.append(text)
+            # a non-encoded run can still smuggle raw 8-bit bytes through the
+            # header parser as surrogate escapes -> recover them and re-decode
+            try:
+                raw = text.encode("ascii", "surrogateescape")
+            except UnicodeEncodeError:
+                out.append(text)
+            else:
+                out.append(_decode_bytes(raw, None))
     return re.sub(r"\s+", " ", "".join(out)).strip()
 
 
@@ -325,7 +354,9 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
     no_date = 0
     hit_limit = False
 
-    with index_path.open("w", newline="", encoding="utf-8") as index_fh:
+    # utf-8-sig: prepend a BOM so Excel opens the CSV as UTF-8 instead of the
+    # system ANSI code page (which renders "Valérie" as "ValÃ©rie").
+    with index_path.open("w", newline="", encoding="utf-8-sig") as index_fh:
         writer = csv.writer(index_fh, delimiter=";")
         writer.writerow(
             ["year", "folder", "date", "subject",
@@ -383,7 +414,7 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
                                 break
                         messages.close()  # release the handle (no-op if exhausted)
                         if hit_limit:
-                            print(f"limit reached: {count} message(s)")
+                            print(f"limit reached: {total} message(s)")
                     fpath.unlink()  # processed -> drop it before the next member
 
     bar.close()
