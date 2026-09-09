@@ -280,6 +280,23 @@ def robust_rmtree(path: Path, *, retries: int = 5, delay: float = 0.5) -> None:
             delay *= 2
 
 
+def rmtree_interactive(path: Path) -> None:
+    """Like ``robust_rmtree`` but, when a file is still held open by another
+    application (typically ``index.csv`` open in Excel), keep asking the user to
+    close it and retry until the tree can be removed."""
+    while path.exists():
+        try:
+            robust_rmtree(path)
+            return
+        except OSError as exc:
+            locked = getattr(exc, "filename", None) or path
+            print(f"cannot remove {locked}: it is open in another application.")
+            try:
+                input("close it, then press Enter to retry (Ctrl-C to abort)... ")
+            except EOFError:
+                raise SystemExit(f"aborted: {locked} is still locked")
+
+
 # --------------------------------------------------------------------------- #
 # driver
 # --------------------------------------------------------------------------- #
@@ -297,7 +314,7 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
     base_dir = output_dir / base
     if base_dir.exists():
         print(f"clearing previous output: {base_dir}")
-        robust_rmtree(base_dir)
+        rmtree_interactive(base_dir)
     base_dir.mkdir(parents=True, exist_ok=True)
     index_path = base_dir / "index.csv"
     made_dirs: set[Path] = set()
