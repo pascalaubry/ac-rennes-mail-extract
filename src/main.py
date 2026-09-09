@@ -461,7 +461,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", type=Path, default=ROOT / "output",
                    help="output directory (default: ./output)")
     p.add_argument("--limit", type=int, default=None,
-                   help="stop after N messages (for testing)")
+                   help="stop after N messages (for testing; 0 = no limit)")
     return p
 
 
@@ -473,10 +473,11 @@ def main(argv: list[str] | None = None) -> int:
     except (AttributeError, ValueError):
         pass
     args = build_parser().parse_args(argv)
+    limit = args.limit or None  # 0 (or omitted) means "no limit"
     try:
         base = choose_base(args.archives_dir)
         return process(
-            base, args.archives_dir, args.tmp_dir, args.output_dir, args.limit,
+            base, args.archives_dir, args.tmp_dir, args.output_dir, limit,
         )
     except (FileNotFoundError, tarfile.TarError) as exc:
         print(f"error: {exc}", file=sys.stderr)
