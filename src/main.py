@@ -25,14 +25,17 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import os
 import re
 import shutil
+import stat
 import sys
 import tarfile
+import time
 from email.header import decode_header
 from email.parser import BytesHeaderParser
 from email.policy import compat32
-from email.utils import parsedate_to_datetime
+from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 
 from progress_bar import CountingStream, ProgressBar
@@ -158,8 +161,18 @@ def _envelope_datetime(raw: bytes) -> dt.datetime | None:
     return None
 
 
-def message_meta(raw: bytes) -> tuple[dt.datetime | None, str]:
-    """Return (datetime_or_None, subject) for a raw message."""
+def _addresses(headers, name: str) -> str:
+    """Comma-separated, de-duplicated address list from the given header(s)."""
+    seen: list[str] = []
+    for _name, addr in getaddresses(headers.get_all(name, [])):
+        addr = addr.strip()
+        if addr and addr not in seen:
+            seen.append(addr)
+    return ",".join(seen)
+
+
+def message_meta(raw: bytes) -> tuple[dt.datetime | None, str, str, str, str, str]:
+    """Return (datetime_or_None, subject, from, to, cc, bcc) for a raw message."""
     headers = BytesHeaderParser(policy=compat32).parsebytes(raw)
 
     when: dt.datetime | None = None
@@ -172,7 +185,14 @@ def message_meta(raw: bytes) -> tuple[dt.datetime | None, str]:
     if when is None:
         when = _envelope_datetime(raw)
 
-    return when, _decode_subject(headers.get("Subject"))
+    return (
+        when,
+        _decode_subject(headers.get("Subject")),
+        _addresses(headers, "From"),
+        _addresses(headers, "To"),
+        _addresses(headers, "Cc"),
+        _addresses(headers, "Bcc"),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -225,6 +245,42 @@ def is_mbox_file(path: Path) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# filesystem helpers
+# --------------------------------------------------------------------------- #
+def _clear_readonly(func, path, _exc):
+    """``rmtree`` error handler: drop the read-only bit and retry the failed op.
+
+    On Windows ``os.unlink`` / ``os.rmdir`` raise ``PermissionError`` on a
+    read-only entry; clearing the attribute and re-calling ``func`` gets past it.
+    """
+    try:
+        os.chmod(path, stat.S_IWRITE)
+    except OSError:
+        pass
+    func(path)
+
+
+def robust_rmtree(path: Path, *, retries: int = 5, delay: float = 0.5) -> None:
+    """``shutil.rmtree`` hardened for Windows: clear read-only bits (via
+    ``_clear_readonly``) and retry a few times with growing back-off so a
+    transient lock (OneDrive sync, Search indexer, antivirus, an open Explorer
+    window) has a chance to release before we give up."""
+    if not path.exists():
+        return
+    for attempt in range(1, retries + 1):
+        try:
+            shutil.rmtree(path, onexc=_clear_readonly)  # onexc: 3.12+
+            return
+        except OSError as exc:
+            if attempt == retries:
+                raise
+            print(f"  could not remove {path} ({exc.__class__.__name__}); "
+                  f"retrying in {delay:.0f}s ({attempt}/{retries - 1})")
+            time.sleep(delay)
+            delay *= 2
+
+
+# --------------------------------------------------------------------------- #
 # driver
 # --------------------------------------------------------------------------- #
 def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
@@ -235,13 +291,13 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
     extract_root = tmp_dir / base
     if extract_root.exists():
         print(f"clearing previous extraction: {extract_root}")
-        shutil.rmtree(extract_root)
+        robust_rmtree(extract_root)
     extract_root.mkdir(parents=True, exist_ok=True)
 
     base_dir = output_dir / base
     if base_dir.exists():
         print(f"clearing previous output: {base_dir}")
-        shutil.rmtree(base_dir)
+        robust_rmtree(base_dir)
     base_dir.mkdir(parents=True, exist_ok=True)
     index_path = base_dir / "index.csv"
     made_dirs: set[Path] = set()
@@ -254,7 +310,10 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
 
     with index_path.open("w", newline="", encoding="utf-8") as index_fh:
         writer = csv.writer(index_fh, delimiter=";")
-        writer.writerow(["folder", "year", "date", "subject", "output_file"])
+        writer.writerow(
+            ["year", "folder", "date", "subject",
+             "from", "to", "cc", "bcc", "output_file"]
+        )
 
         with archive.open("rb") as raw:
             stream = CountingStream(raw, bar)
@@ -275,7 +334,8 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
                         count = 0
                         messages = iter_mbox_messages(fpath)
                         for msg in messages:
-                            when, subject = message_meta(msg)
+                            when, subject, from_addr, to_addrs, cc_addrs, bcc_addrs = \
+                                message_meta(msg)
                             if when is None:
                                 no_date += 1
                                 year, iso = "unknown", ""
@@ -294,7 +354,8 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
                             )
                             out_path.write_bytes(msg)
                             writer.writerow(
-                                [folder_posix, year, iso, subject,
+                                [year, folder_posix, iso, subject,
+                                 from_addr, to_addrs, cc_addrs, bcc_addrs,
                                  out_path.relative_to(base_dir).as_posix()]
                             )
                             count += 1
@@ -304,14 +365,16 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
                                 hit_limit = True
                                 break
                         messages.close()  # release the handle (no-op if exhausted)
-                        suffix = " [limit reached]" if hit_limit else ""
-                        #bar.log(f"  {folder_posix}: {count} message(s){suffix}")
-
+                        if hit_limit:
+                            print(f"limit reached: {count} message(s)")
                     fpath.unlink()  # processed -> drop it before the next member
 
     bar.close()
-    shutil.rmtree(extract_root, ignore_errors=True)
-    print(f"removed scratch tree: {extract_root}")
+    try:
+        robust_rmtree(extract_root)
+        print(f"removed scratch tree: {extract_root}")
+    except OSError as exc:
+        print(f"warning: could not fully remove {extract_root}: {exc}")
     print(f"\ndone: {total} message(s) -> {base_dir} "
           f"({no_date} without a usable date)")
     return 0
@@ -335,6 +398,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Line-buffer stdout so every print() is flushed on its trailing newline
+    # (progress runs on stderr; keep the two interleaving in real time).
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):
+        pass
     args = build_parser().parse_args(argv)
     try:
         base = choose_base(args.archives_dir)
