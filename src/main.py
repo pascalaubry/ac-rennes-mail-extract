@@ -15,7 +15,9 @@ The script:
 4. writes each message as an ``.eml`` file into
    ``output/<base>/<year>/<mail folder hierarchy>/<YYYYMMDD-HHMMSS>_<subject>.eml``
    -- mailbox name, then message year, then the archive's own folder tree --
-   and appends a row to ``output/<base>/index.csv``.
+   and appends a row to ``output/<base>/index.csv``;
+5. finally packs each ``output/<base>/<year>/`` tree into ``output/<base>/<year>.zip``
+   and removes the original directory (``index.csv`` is kept as-is).
 
 Standard library only (Python 3.13).
 """
@@ -32,6 +34,7 @@ import stat
 import sys
 import tarfile
 import time
+import zipfile
 from email.header import decode_header
 from email.parser import BytesHeaderParser
 from email.policy import compat32
@@ -326,6 +329,20 @@ def rmtree_interactive(path: Path) -> None:
                 raise SystemExit(f"aborted: {locked} is still locked")
 
 
+def zip_year_dirs(base_dir: Path) -> None:
+    """Pack each ``<year>/`` subtree of ``base_dir`` into a sibling
+    ``<year>.zip`` (paths inside the zip keep the ``<year>/`` prefix), then
+    remove the original directory. ``index.csv`` is left untouched."""
+    for ydir in sorted(p for p in base_dir.iterdir() if p.is_dir()):
+        zpath = base_dir / f"{ydir.name}.zip"
+        files = sorted(f for f in ydir.rglob("*") if f.is_file())
+        print(f"compressing {ydir.name}/ ({len(files)} file(s)) -> {zpath.name}")
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in files:
+                zf.write(f, f.relative_to(base_dir).as_posix())
+        robust_rmtree(ydir)
+
+
 # --------------------------------------------------------------------------- #
 # driver
 # --------------------------------------------------------------------------- #
@@ -423,6 +440,9 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
         print(f"removed scratch tree: {extract_root}")
     except OSError as exc:
         print(f"warning: could not fully remove {extract_root}: {exc}")
+
+    zip_year_dirs(base_dir)
+
     print(f"\ndone: {total} message(s) -> {base_dir} "
           f"({no_date} without a usable date)")
     return 0
