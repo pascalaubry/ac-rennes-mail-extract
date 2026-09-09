@@ -7,12 +7,11 @@ The script:
 
 1. lists the archives in ``archives/`` and asks which one to process (if there
    is only one, it is used without asking); its name gives the mailbox base;
-2. unpacks it into ``tmp/<base>/`` (any previous extraction is wiped first);
-   each unpacked mbox file is deleted once processed and the whole ``tmp/<base>``
-   tree is removed at the end;
-3. walks every mbox file in the extracted tree (folder files *and* the
-   non-empty ``<Name>.msg`` files), and for every message reads its ``Date:``
-   and ``Subject:`` headers;
+2. streams the archive member by member: each file is extracted into
+   ``tmp/<base>/``, processed, then deleted before moving on, so the whole
+   archive is never on disk at once (``tmp/<base>`` is removed at the end);
+3. every mbox member (folder files *and* the non-empty ``<Name>.msg`` files) is
+   parsed message by message, reading each one's ``Date:`` and ``Subject:``;
 4. writes each message as an ``.eml`` file into
    ``output/<base>/<year>/<mail folder hierarchy>/<YYYYMMDD-HHMMSS>_<subject>.eml``
    -- mailbox name, then message year, then the archive's own folder tree --
@@ -36,7 +35,7 @@ from email.policy import compat32
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-from progress_bar import CountingStream, ProgressBar, human_bytes
+from progress_bar import CountingStream, ProgressBar
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -109,26 +108,6 @@ def find_archive(base: str, archives_dir: Path) -> Path:
         f"no archive for {base!r} in {archives_dir} "
         f"(looked for {', '.join(base + s for s in _ARCHIVE_SUFFIXES)})"
     )
-
-
-def extract_archive(archive: Path, dest: Path) -> None:
-    if dest.exists():
-        print(f"  clearing previous extraction: {dest}")
-        shutil.rmtree(dest)
-    dest.mkdir(parents=True, exist_ok=True)
-    print(f"  extracting {archive.name} -> {dest} ...", flush=True)
-    # Stream mode ("r|...") so the wrapper sees every compressed byte tarfile
-    # reads; progress is measured against the archive's on-disk size.
-    mode = "r|" if archive.suffix == ".tar" else "r|gz"
-    bar = ProgressBar(archive.stat().st_size, show_count=False)
-    bar.update(label=archive.name, force=True)
-    with archive.open("rb") as raw:
-        stream = CountingStream(raw, bar)
-        with tarfile.open(fileobj=stream, mode=mode) as tar:
-            # filter="data" (3.12+) blocks absolute paths, traversal and specials.
-            tar.extractall(dest, filter="data")
-    bar.close()
-    print("  extraction done")
 
 
 # --------------------------------------------------------------------------- #
@@ -216,25 +195,23 @@ def unique_path(directory: Path, stem: str, suffix: str) -> Path:
     return candidate
 
 
-def find_mail_root(extract_root: Path) -> Path:
-    """Descend through single-child ``store*/part*/<box>.export`` wrappers to
-    the directory that actually holds the mail folders."""
-    root = extract_root
-    while True:
-        entries = [e for e in root.iterdir() if not e.name.startswith(".")]
-        if len(entries) == 1 and entries[0].is_dir():
-            root = entries[0]
-        else:
-            return root
-
-
-def logical_folder(mbox: Path, mail_root: Path) -> Path:
-    """Map an mbox file to the mail folder it belongs to, relative to the mail
-    root: ``INBOX`` -> ``INBOX``, ``JRES.msg`` -> ``JRES`` (a parent folder's
-    own messages live in ``<Name>.msg``), ``JRES/Conf-NG`` -> ``JRES/Conf-NG``."""
-    rel = mbox.relative_to(mail_root)
-    name = rel.name[:-4] if rel.name.endswith(".msg") else rel.name
-    parts = [_UNSAFE.sub("_", p) for p in (*rel.parent.parts, name) if p not in ("", ".")]
+def logical_folder(member_name: str) -> Path:
+    """Map an archive member path to the mail folder it belongs to: drop the
+    ``store*/part*/<box>.export/`` wrapper and the ``.msg`` suffix that marks a
+    parent folder's own messages.
+    ``.../paubry.export/INBOX`` -> ``INBOX``,
+    ``.../paubry.export/JRES.msg`` -> ``JRES``,
+    ``.../paubry.export/JRES/Conf-NG`` -> ``JRES/Conf-NG``."""
+    parts = [p for p in member_name.split("/") if p not in ("", ".")]
+    for i, p in enumerate(parts):
+        if p.endswith(".export"):
+            parts = parts[i + 1:]
+            break
+    else:
+        parts = parts[1:]  # no .export wrapper: drop the top-level base dir
+    if parts and parts[-1].endswith(".msg"):
+        parts[-1] = parts[-1][:-4]
+    parts = [_UNSAFE.sub("_", p) for p in parts]
     return Path(*parts) if parts else Path(".")
 
 
@@ -252,86 +229,87 @@ def is_mbox_file(path: Path) -> bool:
 # --------------------------------------------------------------------------- #
 def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
             limit: int | None) -> int:
-    extract_root = tmp_dir / base
     archive = find_archive(base, archives_dir)
     print(f"archive: {archive}")
-    extract_archive(archive, extract_root)
+
+    extract_root = tmp_dir / base
+    if extract_root.exists():
+        print(f"clearing previous extraction: {extract_root}")
+        shutil.rmtree(extract_root)
+    extract_root.mkdir(parents=True, exist_ok=True)
 
     base_dir = output_dir / base
     if base_dir.exists():
         print(f"clearing previous output: {base_dir}")
         shutil.rmtree(base_dir)
-
-    mail_root = find_mail_root(extract_root)
-    mbox_files = sorted(p for p in mail_root.rglob("*") if is_mbox_file(p))
-    total_bytes = sum(p.stat().st_size for p in mbox_files)
-    print(f"mail root: {mail_root}")
-    print(f"found {len(mbox_files)} mbox file(s), {human_bytes(total_bytes)} to read")
-
     base_dir.mkdir(parents=True, exist_ok=True)
     index_path = base_dir / "index.csv"
     made_dirs: set[Path] = set()
 
-    bar = ProgressBar(total_bytes)
+    mode = "r|" if archive.suffix == ".tar" else "r|gz"
+    bar = ProgressBar(archive.stat().st_size)  # measured against compressed size
     total = 0
     no_date = 0
+    hit_limit = False
+
     with index_path.open("w", newline="", encoding="utf-8") as index_fh:
         writer = csv.writer(index_fh, delimiter=";")
         writer.writerow(["folder", "year", "date", "subject", "output_file"])
 
-        file_base = 0  # bytes of the mbox files fully processed so far
-        hit_limit = False
-        for mbox in mbox_files:
-            if hit_limit:
-                break
-            folder = logical_folder(mbox, mail_root)
-            folder_posix = folder.as_posix()
-            size = mbox.stat().st_size
-            bar.update(done=file_base, label=folder_posix, force=True)
-            count = 0
-            in_file = 0
-            messages = iter_mbox_messages(mbox)
-            for raw in messages:
-                when, subject = message_meta(raw)
-                if when is None:
-                    no_date += 1
-                    year = "unknown"
-                    stamp = f"unknown-{total:06d}"
-                    iso = ""
-                else:
-                    year = f"{when.year:04d}"
-                    stamp = when.strftime("%Y%m%d-%H%M%S")
-                    iso = when.isoformat()
+        with archive.open("rb") as raw:
+            stream = CountingStream(raw, bar)
+            with tarfile.open(fileobj=stream, mode=mode) as tar:
+                for member in tar:  # sequential: extract the current one, then advance
+                    if hit_limit:
+                        break
+                    if not member.isfile():
+                        continue
+                    # filter="data" (3.12+) blocks absolute paths, traversal, specials.
+                    tar.extract(member, extract_root, filter="data")
+                    fpath = extract_root / member.name
 
-                dest_dir = base_dir / year / folder
-                if dest_dir not in made_dirs:
-                    dest_dir.mkdir(parents=True, exist_ok=True)
-                    made_dirs.add(dest_dir)
-                out_path = unique_path(
-                    dest_dir, f"{stamp}_{sanitize(subject)}", ".eml"
-                )
-                out_path.write_bytes(raw)
+                    if is_mbox_file(fpath):
+                        folder = logical_folder(member.name)
+                        folder_posix = folder.as_posix()
+                        bar.update(label=folder_posix)
+                        count = 0
+                        messages = iter_mbox_messages(fpath)
+                        for msg in messages:
+                            when, subject = message_meta(msg)
+                            if when is None:
+                                no_date += 1
+                                year, iso = "unknown", ""
+                                stamp = f"unknown-{total:06d}"
+                            else:
+                                year = f"{when.year:04d}"
+                                stamp = when.strftime("%Y%m%d-%H%M%S")
+                                iso = when.isoformat()
 
-                writer.writerow(
-                    [folder_posix, year, iso, subject,
-                     out_path.relative_to(base_dir).as_posix()]
-                )
+                            dest_dir = base_dir / year / folder
+                            if dest_dir not in made_dirs:
+                                dest_dir.mkdir(parents=True, exist_ok=True)
+                                made_dirs.add(dest_dir)
+                            out_path = unique_path(
+                                dest_dir, f"{stamp}_{sanitize(subject)}", ".eml"
+                            )
+                            out_path.write_bytes(msg)
+                            writer.writerow(
+                                [folder_posix, year, iso, subject,
+                                 out_path.relative_to(base_dir).as_posix()]
+                            )
+                            count += 1
+                            total += 1
+                            bar.update(msgs_add=1)
+                            if limit is not None and total >= limit:
+                                hit_limit = True
+                                break
+                        messages.close()  # release the handle (no-op if exhausted)
+                        suffix = " [limit reached]" if hit_limit else ""
+                        #bar.log(f"  {folder_posix}: {count} message(s){suffix}")
 
-                count += 1
-                total += 1
-                in_file += len(raw)
-                bar.update(done=file_base + in_file, msgs_add=1)
-                if limit is not None and total >= limit:
-                    hit_limit = True
-                    break
-            messages.close()  # release the file handle (no-op if exhausted)
-            file_base += size  # self-corrects any per-file drift
-            mbox.unlink()  # done with this file, reclaim the space now
-            bar.update(done=file_base, label=folder_posix)
-            #bar.log(f"  {folder_posix}: {count} message(s){" [limit reached]" if hit_limit else ""}")
+                    fpath.unlink()  # processed -> drop it before the next member
 
     bar.close()
-    # every mbox generator is now closed -> the tree can be removed on Windows too
     shutil.rmtree(extract_root, ignore_errors=True)
     print(f"removed scratch tree: {extract_root}")
     print(f"\ndone: {total} message(s) -> {base_dir} "
