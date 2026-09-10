@@ -1,0 +1,58 @@
+name: ac-rennes-mail-extract builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to build'
+        required: true
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+
+  windows-export:
+    runs-on: windows-latest
+    steps:
+      # Get the current date to set the title of the release
+      - name: Get current date
+        id: date
+        uses: Kaven-Universe/github-action-current-date-time@v1
+        with:
+          format: "YYYY_MM_DD HH_mm_ss_SSS"
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.13
+      - name: Install dependencies
+        shell: powershell
+        run: |
+          pip install -e .[build_exe]
+      - name: Set version variable
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(python -c "from main import APP_VERSION; print(APP_VERSION);")
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Using version: ${VERSION}"
+      - name: Build project
+        shell: powershell
+        run: |
+          python src/build_exe.py --github-version="${{ steps.version.outputs.version }}"
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: "Version ${{ steps.version.outputs.version }} (${{ steps.date.outputs.year }}-${{ steps.date.outputs.month }}-${{ steps.date.outputs.day }})"
+          draft: true
+          prerelease: ${{ contains(steps.version.outputs.version, 'a') || contains(steps.version.outputs.version, 'b') || contains(steps.version.outputs.version, 'rc') }}
+          files: |
+            dist/ac-rennes-mail-extract-${{ steps.version.outputs.version }}.exe
+          body_path: CHANGELOG.md
