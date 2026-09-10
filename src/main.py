@@ -29,6 +29,7 @@ import argparse
 import contextlib
 import csv
 import datetime as dt
+import importlib.metadata
 import io
 import os
 import re
@@ -48,13 +49,11 @@ from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from progress_bar import CountingStream, ProgressBar
-
-import importlib.metadata
-
 from packaging.version import Version
 
-if getattr(sys, "frozen", False):
+from progress_bar import CountingStream, ProgressBar
+
+if getattr(sys, 'frozen', False):
     # PyInstaller one-file build: work next to the .exe, not the temporary
     # extraction directory that __file__ points into.
     ROOT = Path(sys.executable).resolve().parent
@@ -424,9 +423,8 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
                         folder = logical_folder(member.name)
                         folder_posix = folder.as_posix()
                         bar.update(label=folder_posix)
-                        count = 0
                         messages = iter_mbox_messages(fpath)
-                        for msg in messages:
+                        for count, msg in enumerate(messages):
                             when, subject, from_addr, to_addrs, cc_addrs, bcc_addrs = \
                                 message_meta(msg)
                             if when is None:
@@ -461,7 +459,6 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
                                 yw.writerow(columns)
                                 year_writers[year] = yw
                             yw.writerow(row)
-                            count += 1
                             total += 1
                             bar.update(msgs_add=1)
                             if limit is not None and total >= limit:
@@ -519,7 +516,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print(f"stop")
+        print("stop")
         return 1
 
 
@@ -540,7 +537,7 @@ if __name__ == "__main__":
         if exc.code and not isinstance(exc.code, int):
             print(exc.code, file=sys.stderr)
         code = exc.code if isinstance(exc.code, int) else (0 if not exc.code else 1)
-    except Exception:
+    except Exception:  # noqa: BLE001
         traceback.print_exc()
         code = 1
     _pause_on_exit()
