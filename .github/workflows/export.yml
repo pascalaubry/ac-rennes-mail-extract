@@ -41,14 +41,14 @@ jobs:
       - name: Build project
         shell: powershell
         run: |
-          python src/build_exe.py --github-version="${{ steps.version.outputs.version }}"
+          python src/build_exe.py
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: "Version ${{ steps.version.outputs.version }} (${{ steps.date.outputs.year }}-${{ steps.date.outputs.month }}-${{ steps.date.outputs.day }})"
           draft: true
-          prerelease: ${{ contains(steps.version.outputs.version, 'a') || contains(steps.version.outputs.version, 'b') || contains(steps.version.outputs.version, 'rc') }}
+          prerelease: false
           files: |
             dist/ac-rennes-mail-extract-${{ steps.version.outputs.version }}.exe
           body_path: CHANGELOG.md
