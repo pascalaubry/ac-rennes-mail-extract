@@ -15,19 +15,18 @@ The script:
 4. writes each message as an ``.eml`` file into
    ``output/<base>/<year>/<mail folder hierarchy>/<YYYYMMDD-HHMMSS>_<subject>.eml``
    -- mailbox name, then message year, then the archive's own folder tree --
-   and appends a row both to the global ``output/<base>/index.csv`` and to a
-   per-year ``output/<base>/<year>.csv`` (same columns);
+   and appends a row both to the global ``output/<base>/index.xlsx`` and to a
+   per-year ``output/<base>/<year>.xlsx`` (same columns);
 5. finally packs each ``output/<base>/<year>/`` tree into ``output/<base>/<year>.zip``
-   and removes the original directory (the ``.csv`` files are kept as-is).
+   and removes the original directory (the ``.xlsx`` files are kept as-is).
 
-Standard library only (Python 3.13).
+Python 3.13. Third-party dependencies: ``packaging``, ``XlsxWriter``.
 """
 
 from __future__ import annotations
 
 import argparse
 import contextlib
-import csv
 import datetime as dt
 import importlib.metadata
 import io
@@ -47,8 +46,9 @@ from email.parser import BytesHeaderParser
 from email.policy import compat32
 from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
+import xlsxwriter
 from packaging.version import Version
 
 from progress_bar import CountingStream, ProgressBar
@@ -266,6 +266,30 @@ def unique_path(directory: Path, stem: str, suffix: str) -> Path:
     return candidate
 
 
+class _XlsxTable:
+    """A one-sheet ``.xlsx`` workbook filled row by row.
+
+    ``constant_memory`` keeps only the current row in RAM (finished rows are
+    spooled straight to the workbook), matching this tool's streaming approach.
+    Rows must therefore be appended in order, and ``close()`` must be called to
+    finalise the file -- callers register it with the ``ExitStack``.
+    """
+
+    def __init__(self, path: Path, header: list[str]) -> None:
+        self._wb = xlsxwriter.Workbook(str(path), {"constant_memory": True})
+        self._ws = self._wb.add_worksheet()
+        self._ws.freeze_panes(1, 0)
+        self._ws.write_row(0, 0, header, self._wb.add_format({"bold": True}))
+        self._row = 1
+
+    def append(self, values: list[str]) -> None:
+        self._ws.write_row(self._row, 0, values)
+        self._row += 1
+
+    def close(self) -> None:
+        self._wb.close()
+
+
 def logical_folder(member_name: str) -> Path:
     """Map an archive member path to the mail folder it belongs to: drop the
     ``store*/part*/<box>.export/`` wrapper and the ``.msg`` suffix that marks a
@@ -335,7 +359,7 @@ def robust_rmtree(path: Path, *, retries: int = 5, delay: float = 0.5) -> None:
 
 def rmtree_interactive(path: Path) -> None:
     """Like ``robust_rmtree`` but, when a file is still held open by another
-    application (typically ``index.csv`` open in Excel), keep asking the user to
+    application (typically ``index.xlsx`` open in Excel), keep asking the user to
     close it and retry until the tree can be removed."""
     while path.exists():
         try:
@@ -353,7 +377,7 @@ def rmtree_interactive(path: Path) -> None:
 def zip_year_dirs(base_dir: Path) -> None:
     """Pack each ``<year>/`` subtree of ``base_dir`` into a sibling
     ``<year>.zip`` (paths inside the zip keep the ``<year>/`` prefix), then
-    remove the original directory. ``index.csv`` is left untouched."""
+    remove the original directory. The ``.xlsx`` files are left untouched."""
     for ydir in sorted(p for p in base_dir.iterdir() if p.is_dir()):
         zpath = base_dir / f"{ydir.name}.zip"
         files = sorted(f for f in ydir.rglob("*") if f.is_file())
@@ -383,7 +407,7 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
         print(f"clearing previous output: {base_dir}")
         rmtree_interactive(base_dir)
     base_dir.mkdir(parents=True, exist_ok=True)
-    index_path = base_dir / "index.csv"
+    index_path = base_dir / "index.xlsx"
     made_dirs: set[Path] = set()
 
     mode: Literal["r|", "r|gz"] = "r|" if archive.suffix == ".tar" else "r|gz"
@@ -392,20 +416,15 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
     no_date = 0
     hit_limit = False
 
-    # utf-8-sig: prepend a BOM so Excel opens the CSV as UTF-8 instead of the
-    # system ANSI code page (which renders "Valérie" as "ValÃ©rie").
     columns = ["year", "folder", "date", "subject",
                "from", "to", "cc", "bcc", "output_file"]
-    # the global index.csv, plus one <year>.csv per year written alongside the
-    # <year>.zip files (created lazily, same columns, closed by the ExitStack)
-    year_writers: dict[str, Any] = {}
+    # the global index.xlsx, plus one <year>.xlsx per year written alongside the
+    # <year>.zip files (created lazily, same columns, finalised by the ExitStack)
+    tables: dict[str, _XlsxTable] = {}
 
-    with contextlib.ExitStack() as csv_stack:
-        index_fh = csv_stack.enter_context(
-            index_path.open("w", newline="", encoding="utf-8-sig")
-        )
-        writer = csv.writer(index_fh, delimiter=";")
-        writer.writerow(columns)
+    with contextlib.ExitStack() as sheets:
+        index = _XlsxTable(index_path, columns)
+        sheets.callback(index.close)
 
         with archive.open("rb") as raw:
             stream = CountingStream(raw, bar)
@@ -447,18 +466,15 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
                             row = [year, folder_posix, iso, subject,
                                    from_addr, to_addrs, cc_addrs, bcc_addrs,
                                    out_path.relative_to(base_dir).as_posix()]
-                            writer.writerow(row)
-                            yw = year_writers.get(year)
-                            if yw is None:
-                                yfh = csv_stack.enter_context(
-                                    (base_dir / f"{year}.csv").open(
-                                        "w", newline="", encoding="utf-8-sig"
-                                    )
+                            index.append(row)
+                            table = tables.get(year)
+                            if table is None:
+                                table = _XlsxTable(
+                                    base_dir / f"{year}.xlsx", columns
                                 )
-                                yw = csv.writer(yfh, delimiter=";")
-                                yw.writerow(columns)
-                                year_writers[year] = yw
-                            yw.writerow(row)
+                                tables[year] = table
+                                sheets.callback(table.close)
+                            table.append(row)
                             total += 1
                             bar.update(msgs_add=1)
                             if limit is not None and total >= limit:

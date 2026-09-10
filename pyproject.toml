@@ -5,10 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ac-rennes-mail-extract"
 version = "1.0.0"
-description = "Extract an Academie de Rennes mailbox archive into a per-year tree of .eml files plus a CSV index."
+description = "Extract an Academie de Rennes mailbox archive into a per-year tree of .eml files plus an XLSX index."
 requires-python = ">=3.13"
 dependencies = [
   "packaging ~= 26.3",
+  "XlsxWriter ~= 3.2",
 ]
 
 [project.scripts]

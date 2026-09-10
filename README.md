@@ -3,7 +3,7 @@
 `ac-rennes-mail-extract` permet l'extraction d'une archive de boîte aux lettres 
 de l'Académie de Rennes (export Oracle / Sun Java System Messaging Server) vers 
 une arborescence de fichiers `.eml` classés par année, accompagnée d'un index 
-CSV — en vue d'un archivage pérenne (contexte SSI / archivage).
+Excel (`.xlsx`) — en vue d'un archivage pérenne (contexte SSI / archivage).
 
 ## Documentation utilisateur
 
@@ -61,12 +61,12 @@ Le résultat du programme se présente sous cette hiérarchie de dossier et fich
 ```
 output/
 └── <compte>/
-    ├── index.csv         ← index global (tous les messages)
-    ├── 2018.csv          ← index de l'année 2018 uniquement
+    ├── index.xlsx        ← index global (tous les messages)
+    ├── 2018.xlsx         ← index de l'année 2018 uniquement
     ├── 2018.zip          ← contient 2018/<hiérarchie de dossiers>/*.eml
-    ├── 2019.csv
+    ├── 2019.xlsx
     ├── 2019.zip
-    ├── unknown.csv       ← messages sans date exploitable
+    ├── unknown.xlsx      ← messages sans date exploitable
     └── unknown.zip
 ```
 
@@ -75,11 +75,11 @@ Les fichiers des archives par année sont organisés de la manière suivante :
 
 En cas de conflit de nom (même sujet et même date), les fichiers sont suffixées `_1`, `_2`, …
 
-Le fichier global `output\<compte>\index.csv` et les fichiers annuels
-`output\<compte>\<année>.csv` (encodage **UTF-8 avec BOM**, séparateur `;`)
-s'ouvrent directement dans Excel et contiennent une ligne par message. Les
-fichiers annuels ont exactement les mêmes colonnes que l'index global, filtrées
-sur l'année.
+Le classeur global `output\<compte>\index.xlsx` et les classeurs annuels
+`output\<compte>\<année>.xlsx` (une feuille, ligne d'en-tête figée) s'ouvrent
+directement dans Excel et contiennent une ligne par message. Les classeurs
+annuels ont exactement les mêmes colonnes que l'index global, filtrées sur
+l'année.
 
 | Colonne             | Contenu                                                           |
 |---------------------|-------------------------------------------------------------------|
