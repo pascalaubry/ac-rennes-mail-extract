@@ -37,6 +37,7 @@ import stat
 import sys
 import tarfile
 import time
+import traceback
 import zipfile
 from collections.abc import Callable, Generator
 from email.header import decode_header
@@ -522,5 +523,25 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
+def _pause_on_exit() -> None:
+    """Wait for Enter so a double-clicked console window stays open long enough
+    to read the final report. Skipped when stdin is not interactive."""
+    if sys.stdin and sys.stdin.isatty():
+        try:
+            input("\npress Enter to exit... ")
+        except (EOFError, KeyboardInterrupt):
+            pass
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        code = main()
+    except SystemExit as exc:  # e.g. no archive chosen / output still locked
+        if exc.code and not isinstance(exc.code, int):
+            print(exc.code, file=sys.stderr)
+        code = exc.code if isinstance(exc.code, int) else (0 if not exc.code else 1)
+    except Exception:
+        traceback.print_exc()
+        code = 1
+    _pause_on_exit()
+    raise SystemExit(code)
