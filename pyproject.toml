@@ -7,7 +7,9 @@ name = "ac-rennes-mail-extract"
 version = "1.0.0"
 description = "Extract an Academie de Rennes mailbox archive into a per-year tree of .eml files plus a CSV index."
 requires-python = ">=3.13"
-dependencies = []  # standard library only
+dependencies = [
+  "packaging ~= 26.3",
+]
 
 [project.scripts]
 mail-extract = "main:main"
@@ -18,7 +20,7 @@ py-modules = ["main", "progress_bar"]
 
 [project.optional-dependencies]
 lint = [
-  "mypy >= 2.3.1",
+  "mypy ~= 2.3.1",
   "pipdeptree",
   "pre-commit",
   "ruff ~= 0.16.6",

@@ -47,7 +47,20 @@ from typing import Literal
 
 from progress_bar import CountingStream, ProgressBar
 
-ROOT = Path(__file__).resolve().parent.parent
+import importlib.metadata
+
+from packaging.version import Version
+
+if getattr(sys, "frozen", False):
+    # PyInstaller one-file build: work next to the .exe, not the temporary
+    # extraction directory that __file__ points into.
+    ROOT = Path(sys.executable).resolve().parent
+else:
+    ROOT = Path(__file__).resolve().parent.parent
+
+
+APP_NAME: str = 'ac-rennes-mail-extract'
+APP_VERSION: Version = Version(importlib.metadata.version(APP_NAME))
 
 # A message boundary: a line like
 #   From julien@kokan.fr Wed Nov 20 19:10:03 2019 +0100
