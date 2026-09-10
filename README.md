@@ -119,7 +119,7 @@ pip install -e .
    python src\main.py
    ```
 
-### Générer un exécutable autonome
+### Générer un exécutable autonome localement
 
 ```
 pip install -e ".[build_exe]"
@@ -127,6 +127,22 @@ python scripts\build_exe.py
 ```
 
 `scripts/build_exe.py` appelle PyInstaller (mode un seul fichier, console).
+
+### Publier une nouvelle version en ligne
+
+Créer un tag du nom de la version, par exemple :
+
+```
+git tag --file=CHANGELOG.md 1.0.1
+```
+
+Puis pousser le tag sur le dépôt :
+
+```
+git push origin tag 1.0.1
+```
+
+La nouvelle version est disponible sur https://github.com/pascalaubry/ac-rennes-mail-extract/releases.
 
 ### Environnement de développement
 

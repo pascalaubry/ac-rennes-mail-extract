@@ -11,7 +11,6 @@ permissions:
   issues: write
 
 jobs:
-
   windows-build:
     runs-on: windows-latest
     steps:
@@ -47,7 +46,7 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: "Version ${{ steps.version.outputs.version }} (${{ steps.date.outputs.year }}-${{ steps.date.outputs.month }}-${{ steps.date.outputs.day }})"
-          draft: true
+          draft: false
           prerelease: false
           files: |
             dist/ac-rennes-mail-extract-${{ steps.version.outputs.version }}.exe
