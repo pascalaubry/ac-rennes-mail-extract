@@ -61,10 +61,13 @@ Le résultat du programme se présente sous cette hiérarchie de dossier et fich
 ```
 output/
 └── <compte>/
-    ├── index.csv
+    ├── index.csv         ← index global (tous les messages)
+    ├── 2018.csv          ← index de l'année 2018 uniquement
     ├── 2018.zip          ← contient 2018/<hiérarchie de dossiers>/*.eml
+    ├── 2019.csv
     ├── 2019.zip
-    └── unknown.zip       ← messages sans date exploitable
+    ├── unknown.csv       ← messages sans date exploitable
+    └── unknown.zip
 ```
 
 Les fichiers des archives par année sont organisés de la manière suivante :
@@ -72,8 +75,11 @@ Les fichiers des archives par année sont organisés de la manière suivante :
 
 En cas de conflit de nom (même sujet et même date), les fichiers sont suffixées `_1`, `_2`, …
 
-Le fichier `output\<compte>\index.csv` (encodage **UTF-8 avec BOM**) s'ouvre 
-directement dans Excel et contient une ligne par message avec les données suivantes (séparateur `;`).
+Le fichier global `output\<compte>\index.csv` et les fichiers annuels
+`output\<compte>\<année>.csv` (encodage **UTF-8 avec BOM**, séparateur `;`)
+s'ouvrent directement dans Excel et contiennent une ligne par message. Les
+fichiers annuels ont exactement les mêmes colonnes que l'index global, filtrées
+sur l'année.
 
 | Colonne             | Contenu                                                           |
 |---------------------|-------------------------------------------------------------------|

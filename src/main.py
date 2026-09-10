@@ -15,9 +15,10 @@ The script:
 4. writes each message as an ``.eml`` file into
    ``output/<base>/<year>/<mail folder hierarchy>/<YYYYMMDD-HHMMSS>_<subject>.eml``
    -- mailbox name, then message year, then the archive's own folder tree --
-   and appends a row to ``output/<base>/index.csv``;
+   and appends a row both to the global ``output/<base>/index.csv`` and to a
+   per-year ``output/<base>/<year>.csv`` (same columns);
 5. finally packs each ``output/<base>/<year>/`` tree into ``output/<base>/<year>.zip``
-   and removes the original directory (``index.csv`` is kept as-is).
+   and removes the original directory (the ``.csv`` files are kept as-is).
 
 Standard library only (Python 3.13).
 """
@@ -25,6 +26,7 @@ Standard library only (Python 3.13).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import datetime as dt
 import io
@@ -43,7 +45,7 @@ from email.parser import BytesHeaderParser
 from email.policy import compat32
 from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from progress_bar import CountingStream, ProgressBar
 
@@ -392,12 +394,18 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
 
     # utf-8-sig: prepend a BOM so Excel opens the CSV as UTF-8 instead of the
     # system ANSI code page (which renders "Valérie" as "ValÃ©rie").
-    with index_path.open("w", newline="", encoding="utf-8-sig") as index_fh:
-        writer = csv.writer(index_fh, delimiter=";")
-        writer.writerow(
-            ["year", "folder", "date", "subject",
-             "from", "to", "cc", "bcc", "output_file"]
+    columns = ["year", "folder", "date", "subject",
+               "from", "to", "cc", "bcc", "output_file"]
+    # the global index.csv, plus one <year>.csv per year written alongside the
+    # <year>.zip files (created lazily, same columns, closed by the ExitStack)
+    year_writers: dict[str, Any] = {}
+
+    with contextlib.ExitStack() as csv_stack:
+        index_fh = csv_stack.enter_context(
+            index_path.open("w", newline="", encoding="utf-8-sig")
         )
+        writer = csv.writer(index_fh, delimiter=";")
+        writer.writerow(columns)
 
         with archive.open("rb") as raw:
             stream = CountingStream(raw, bar)
@@ -437,11 +445,21 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
                                 dest_dir, f"{stamp}_{sanitize(subject)}", ".eml"
                             )
                             out_path.write_bytes(msg)
-                            writer.writerow(
-                                [year, folder_posix, iso, subject,
-                                 from_addr, to_addrs, cc_addrs, bcc_addrs,
-                                 out_path.relative_to(base_dir).as_posix()]
-                            )
+                            row = [year, folder_posix, iso, subject,
+                                   from_addr, to_addrs, cc_addrs, bcc_addrs,
+                                   out_path.relative_to(base_dir).as_posix()]
+                            writer.writerow(row)
+                            yw = year_writers.get(year)
+                            if yw is None:
+                                yfh = csv_stack.enter_context(
+                                    (base_dir / f"{year}.csv").open(
+                                        "w", newline="", encoding="utf-8-sig"
+                                    )
+                                )
+                                yw = csv.writer(yfh, delimiter=";")
+                                yw.writerow(columns)
+                                year_writers[year] = yw
+                            yw.writerow(row)
                             count += 1
                             total += 1
                             bar.update(msgs_add=1)
