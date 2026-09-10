@@ -12,7 +12,7 @@ permissions:
 
 jobs:
 
-  windows-export:
+  windows-build:
     runs-on: windows-latest
     steps:
       # Get the current date to set the title of the release
