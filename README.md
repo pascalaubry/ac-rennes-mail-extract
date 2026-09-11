@@ -31,6 +31,14 @@ ac-rennes-mail-extract-x.y.z.exe
 S'il n'y a qu'une archive dans `archives/`, elle est traitée directement.
 S'il y en a plusieurs, un menu propose de choisir.
 
+Une fois l'archive choisie, un menu demande quelles années traiter :
+
+1. toutes les années (jusqu'à l'année en cours) ;
+2. toutes les années passées (jusqu'à l'année précédente, donc sans l'année en cours) ;
+3. l'année précédente seulement.
+
+Les messages sans date exploitable sont toujours traités, quel que soit ce choix.
+
 Une barre de progression s'affiche (pourcentage calculé sur la taille
 compressée, estimation du temps restant, nombre de messages traités).
 `Ctrl-C` interrompt proprement le traitement.

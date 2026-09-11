@@ -7,6 +7,9 @@ The script:
 
 1. lists the archives in ``archives/`` and asks which one to process (if there
    is only one, it is used without asking); its name gives the mailbox base;
+   the user is then asked which years to process -- all years, all past years
+   only, or just the previous year (messages with no usable date are always
+   processed, whatever the choice);
 2. streams the archive member by member: each file is extracted into
    ``tmp/<base>/``, processed, then deleted before moving on, so the whole
    archive is never on disk at once (``tmp/<base>`` is removed at the end);
@@ -105,24 +108,62 @@ def choose_base(archives_dir: Path) -> str:
     """Ask the user which archive of ``archives_dir`` to process."""
     archives = discover_archives(archives_dir)
     if not archives:
-        raise FileNotFoundError(f"no archive found in {archives_dir}")
+        raise FileNotFoundError(f"Aucune archive trouvée dans {archives_dir}.")
     if len(archives) == 1:
         base = archive_base(archives[0])
-        print(f"using the only archive found: {archives[0].name} (base {base!r})")
+        print(f"Chargement de la seule archive trouvée : {archives[0].name} (base : {base!r})")
         return base
 
-    print(f"archives available in {archives_dir}:")
+    print(f"Archives disponibles dans le dossier {archives_dir} :")
     for i, p in enumerate(archives, 1):
         size_mib = p.stat().st_size / (1024 * 1024)
         print(f"  {i}. {p.name}  ({size_mib:,.0f} MiB)")
     while True:
         try:
-            reply = input(f"choose an archive [1-{len(archives)}]: ").strip()
+            reply = input(f"Choisir une archive [1-{len(archives)}] : ").strip()
         except EOFError:
-            raise SystemExit("no archive chosen")
+            raise SystemExit("Aucune archive choisie.")
         if reply.isdigit() and 1 <= int(reply) <= len(archives):
             return archive_base(archives[int(reply) - 1])
-        print("  invalid choice, try again")
+        print("Choix non valide (Ctrl-C pour quitter).")
+
+
+def choose_year_scope(current_year: int) -> tuple[int | None, int | None]:
+    """Ask the user which message years to process; return an inclusive
+    ``(min_year, max_year)`` bound (``None`` = unbounded on that side).
+    Messages with no usable date are always processed, whatever is returned
+    here -- see ``in_year_scope``."""
+    previous_year = current_year - 1
+    options: list[tuple[str, int | None, int | None]] = [
+        (f"Toutes les années (jusqu'à {current_year})", None, current_year),
+        (f"Toutes les années passées (jusqu'à {previous_year})", None, previous_year),
+        (f"L'année {previous_year} seulement", previous_year, previous_year),
+    ]
+    print("Quelles années faut-il traîter ?")
+    for i, (label, _, _) in enumerate(options, 1):
+        print(f"  {i}. {label}")
+    while True:
+        try:
+            reply = input(f"choisissez une option [1-{len(options)}]: ").strip()
+        except EOFError:
+            raise SystemExit("Aucun choix effectué.")
+        if reply.isdigit() and 1 <= int(reply) <= len(options):
+            label, min_year, max_year = options[int(reply) - 1]
+            print(f"years in scope: {label}")
+            return min_year, max_year
+        print("Choix non valide (Ctrl-C pour quitter).")
+
+
+def in_year_scope(year: str, min_year: int | None, max_year: int | None) -> bool:
+    """Whether a message's ``year`` field (``"YYYY"`` or ``"unknown"``) falls
+    within the ``(min_year, max_year)`` bound. ``"unknown"`` is always in
+    scope: its real year cannot be determined, so it is never filtered out."""
+    if year == "unknown":
+        return True
+    y = int(year)
+    if min_year is not None and y < min_year:
+        return False
+    return not (max_year is not None and y > max_year)
 
 
 def find_archive(base: str, archives_dir: Path) -> Path:
@@ -131,8 +172,8 @@ def find_archive(base: str, archives_dir: Path) -> Path:
         if candidate.is_file():
             return candidate
     raise FileNotFoundError(
-        f"no archive for {base!r} in {archives_dir} "
-        f"(looked for {', '.join(base + s for s in _ARCHIVE_SUFFIXES)})"
+        f"Aucune archive trouvée pour {base!r} dans le dossier {archives_dir} "
+        f"(recherché {', '.join(base + s for s in _ARCHIVE_SUFFIXES)})."
     )
 
 
@@ -352,8 +393,8 @@ def robust_rmtree(path: Path, *, retries: int = 5, delay: float = 0.5) -> None:
         except OSError as exc:
             if attempt == retries:
                 raise
-            print(f"  could not remove {path} ({exc.__class__.__name__}); "
-                  f"retrying in {delay:.0f}s ({attempt}/{retries - 1})")
+            print(f"  Impossible de supprimer {path} ({exc.__class__.__name__}); "
+                  f"nouvel essai dans {delay:.0f}s ({attempt}/{retries - 1}).")
             time.sleep(delay)
             delay *= 2
 
@@ -368,11 +409,11 @@ def rmtree_interactive(path: Path) -> None:
             return
         except OSError as exc:
             locked = getattr(exc, "filename", None) or path
-            print(f"cannot remove {locked}: it is open in another application.")
+            print(f"Impossible de supprimer {locked} : le fichier est ouvert dans une autre application.")
             try:
-                input("close it, then press Enter to retry (Ctrl-C to abort)... ")
+                input("Fermez le fichier puis appuyez sur Entrée pour ré-essayer (Ctrl-C pour quitter)... ")
             except EOFError:
-                raise SystemExit(f"aborted: {locked} is still locked")
+                raise SystemExit(f"Le fichier {locked} est toujours verrouillé.")
 
 
 def zip_year_dirs(base_dir: Path, base: str) -> None:
@@ -382,7 +423,7 @@ def zip_year_dirs(base_dir: Path, base: str) -> None:
     for ydir in sorted(p for p in base_dir.iterdir() if p.is_dir()):
         zpath = base_dir / f"{base}-{ydir.name}.zip"
         files = sorted(f for f in ydir.rglob("*") if f.is_file())
-        print(f"compressing {ydir.name}/ ({len(files)} file(s)) -> {zpath.name}")
+        print(f"Compression {ydir.name}/ ({len(files)} fichier(s)) -> {zpath.name}")
         with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
             for f in files:
                 zf.write(f, f.relative_to(base_dir).as_posix())
@@ -393,19 +434,20 @@ def zip_year_dirs(base_dir: Path, base: str) -> None:
 # driver
 # --------------------------------------------------------------------------- #
 def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
-            limit: int | None) -> int:
+            limit: int | None,
+            min_year: int | None = None, max_year: int | None = None) -> int:
     archive = find_archive(base, archives_dir)
-    print(f"archive: {archive}")
+    print(f"Archive : {archive}")
 
     extract_root = tmp_dir / base
     if extract_root.exists():
-        print(f"clearing previous extraction: {extract_root}")
+        print(f"Nettoyage des extractions précédentes : {extract_root}")
         robust_rmtree(extract_root)
     extract_root.mkdir(parents=True, exist_ok=True)
 
     base_dir = output_dir / base
     if base_dir.exists():
-        print(f"clearing previous output: {base_dir}")
+        print(f"Nettoyage des sorties précédentes : {base_dir}")
         rmtree_interactive(base_dir)
     base_dir.mkdir(parents=True, exist_ok=True)
     index_path = base_dir / f"{base}.xlsx"
@@ -415,6 +457,7 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
     bar = ProgressBar(archive.stat().st_size)  # measured against compressed size
     total = 0
     no_date = 0
+    skipped_scope = 0
     hit_limit = False
 
     columns = ["year", "folder", "date", "subject",
@@ -457,6 +500,10 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
                                 stamp = when.strftime("%Y%m%d-%H%M%S")
                                 iso = when.isoformat()
 
+                            if not in_year_scope(year, min_year, max_year):
+                                skipped_scope += 1
+                                continue
+
                             dest_dir = base_dir / year / folder
                             if dest_dir not in made_dirs:
                                 dest_dir.mkdir(parents=True, exist_ok=True)
@@ -484,37 +531,41 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
                                 break
                         messages.close()  # release the handle (no-op if exhausted)
                         if hit_limit:
-                            print(f"limit reached: {total} message(s)")
+                            print(f"Limite atteinte : {total} messages.")
                     fpath.unlink()  # processed -> drop it before the next member
 
     bar.close()
     try:
         robust_rmtree(extract_root)
-        print(f"removed scratch tree: {extract_root}")
+        print(f"Suppression des fichiers intermédiaires : {extract_root}")
     except OSError as exc:
-        print(f"warning: could not fully remove {extract_root}: {exc}")
+        print(f"Attention : impossible de supprimer {extract_root}: {exc}")
 
     zip_year_dirs(base_dir, base)
 
-    print(f"\ndone: {total} message(s) -> {base_dir} "
-          f"({no_date} without a usable date)")
+    print(f"\nTerminé: {total} message(s) -> {base_dir} "
+          f"({no_date} sans date, "
+          f"{skipped_scope} ignorés car année non traitée)")
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="mail-extract",
-        description="Extract a mailbox archive into .eml files, grouped by "
-                    "message year then mirroring the archive folder tree.",
+        description="Extrait d'une archive de boite à lettres les fichiers .eml, "
+                    "groupés par année avec la hiérarchie d'origine des messages.",
     )
+    default_archives_dir: Path = ROOT / "archives"
     p.add_argument("--archives-dir", type=Path, default=ROOT / "archives",
-                   help="directory holding <base>.tgz (default: ./archives)")
-    p.add_argument("--tmp-dir", type=Path, default=ROOT / "tmp",
-                   help="extraction directory (default: ./tmp)")
-    p.add_argument("--output-dir", type=Path, default=ROOT / "output",
-                   help="output directory (default: ./output)")
+                   help=f"le répertoire où trouver les archives (par défault : {default_archives_dir})")
+    default_tmp_dir: Path = ROOT / "tmp"
+    p.add_argument("--tmp-dir", type=Path, default=default_tmp_dir,
+                   help=f"le répertoire temporaire d'extraction (par défaut : {default_tmp_dir})")
+    default_output_dir: Path = ROOT / "output"
+    p.add_argument("--output-dir", type=Path, default=default_output_dir,
+                   help=f"le répertoire de sortie (par défault : {default_output_dir})")
     p.add_argument("--limit", type=int, default=None,
-                   help="stop after N messages (for testing; 0 = no limit)")
+                   help="le nombre maximum de messages à traiter (pour test, 0 = pas de limite)")
     return p
 
 
@@ -527,8 +578,10 @@ def main(argv: list[str] | None = None) -> int:
     limit = args.limit or None  # 0 (or omitted) means "no limit"
     try:
         base = choose_base(args.archives_dir)
+        min_year, max_year = choose_year_scope(dt.datetime.now().year)
         return process(
             base, args.archives_dir, args.tmp_dir, args.output_dir, limit,
+            min_year, max_year,
         )
     except (FileNotFoundError, tarfile.TarError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -543,7 +596,7 @@ def _pause_on_exit() -> None:
     to read the final report. Skipped when stdin is not interactive."""
     if sys.stdin and sys.stdin.isatty():
         try:
-            input("\npress Enter to exit... ")
+            input("\nPresser Entrée pour terminer... ")
         except (EOFError, KeyboardInterrupt):
             pass
 
