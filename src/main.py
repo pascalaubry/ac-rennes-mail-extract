@@ -552,8 +552,10 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="mail-extract",
-        description="Extrait d'une archive de boite à lettres les fichiers .eml, "
-                    "groupés par année avec la hiérarchie d'origine des messages.",
+        description="Traitement des archives de boites à lettres de l'Académie de Rennes, "
+                    "pour archivage (extraction des fichiers au format EML, groupés par année "
+                    "avec la hiérarchie d'origine des messages, et production de fichiers d'index "
+                    "pour faciliter les recherches).",
     )
     default_archives_dir: Path = ROOT / "archives"
     p.add_argument("--archives-dir", type=Path, default=ROOT / "archives",
