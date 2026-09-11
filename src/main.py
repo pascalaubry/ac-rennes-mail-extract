@@ -586,10 +586,10 @@ def main(argv: list[str] | None = None) -> int:
             min_year, max_year,
         )
     except (FileNotFoundError, tarfile.TarError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"Erreur : {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print("stop")
+        print("Arrêt du programme.")
         return 1
 
 

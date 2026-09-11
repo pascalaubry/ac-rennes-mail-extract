@@ -13,11 +13,11 @@ if TYPE_CHECKING:
 
 
 def human_bytes(n: float) -> str:
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if n < 1024 or unit == "TiB":
-            return f"{n:.0f} B" if unit == "B" else f"{n:.1f} {unit}"
+    for unit in ("o", "Ko", "Mo", "Go", "To"):
+        if n < 1024 or unit == "To":
+            return f"{n:.0f}o" if unit == "o" else f"{n:.1f}{unit}"
         n /= 1024
-    return f"{n:.1f} TiB"
+    return f"{n:.1f}To"
 
 
 def format_duration(seconds: float) -> str:
@@ -74,7 +74,7 @@ class ProgressBar:
         frac = min(self.done / self.total, 1.0) if self.total else 1.0
         filled = round(frac * self.width)
         bar = "#" * filled + "-" * (self.width - filled)
-        count = f"{self.msgs:,} msg  " if self.show_count else ""
+        count = f"{self.msgs} msg  " if self.show_count else ""
         line = (f"[{bar}] {frac * 100:5.1f}%  "
                 f"{human_bytes(self.done)}/{human_bytes(self.total)}  "
                 f"ETA {self._eta()}  {count}{self.label}")
