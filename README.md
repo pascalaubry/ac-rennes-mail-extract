@@ -147,13 +147,13 @@ python scripts\build_exe.py
 Créer un tag du nom de la version, par exemple :
 
 ```
-git tag --file=CHANGELOG.md 1.0.1
+git tag --file=RELEASE_NOTES.md 1.1.0
 ```
 
 Puis pousser le tag sur le dépôt :
 
 ```
-git push origin tag 1.0.1
+git push origin tag 1.1.0
 ```
 
 La nouvelle version est disponible sur https://github.com/pascalaubry/ac-rennes-mail-extract/releases.

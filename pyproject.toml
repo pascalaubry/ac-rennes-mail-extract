@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ac-rennes-mail-extract"
 version = "1.1.0"
-description = "Traitement des archives de boites à lettres de l'Académie de Rennes, pour archivage (extraction des fichiers au format EML, groupés par année avec la hiérarchie d'origine des messages, et production de fichiers d'index pour faciliter les recherches).",
+description = "Traitement des archives de boites à lettres de l'Académie de Rennes, pour archivage (extraction des fichiers au format EML, groupés par année avec la hiérarchie d'origine des messages, et production de fichiers d'index pour faciliter les recherches)."
 requires-python = ">=3.13"
 dependencies = [
   "packaging ~= 26.3",
