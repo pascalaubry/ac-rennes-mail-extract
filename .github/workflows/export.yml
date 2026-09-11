@@ -50,4 +50,4 @@ jobs:
           prerelease: false
           files: |
             dist/ac-rennes-mail-extract-${{ steps.version.outputs.version }}.exe
-          body_path: CHANGELOG.md
+          body_path: RELEASE_NOTES.md
