@@ -19,7 +19,7 @@ Windows 11.
 ### Utilisation
 
 1. Récupérer la boite à lettres à archiver auprès des responsables de la messagerie ;
-2. La déposer dans le répertoire `mail_extract\archives`.
+2. La déposer dans le répertoire `mail_extract/archives`.
 3. Lancer le programme
 
 ```
