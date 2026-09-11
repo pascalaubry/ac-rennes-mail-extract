@@ -61,13 +61,13 @@ Le résultat du programme se présente sous cette hiérarchie de dossier et fich
 ```
 output/
 └── <compte>/
-    ├── index.xlsx        ← index global (tous les messages)
-    ├── 2018.xlsx         ← index de l'année 2018 uniquement
-    ├── 2018.zip          ← contient 2018/<hiérarchie de dossiers>/*.eml
-    ├── 2019.xlsx
-    ├── 2019.zip
-    ├── unknown.xlsx      ← messages sans date exploitable
-    └── unknown.zip
+    ├── <compte>.xlsx          ← index global (tous les messages)
+    ├── <compte>-2018.xlsx     ← index de l'année 2018 uniquement
+    ├── <compte>-2018.zip      ← contient 2018/<hiérarchie de dossiers>/*.eml
+    ├── <compte>-2019.xlsx
+    ├── <compte>-2019.zip
+    ├── <compte>-unknown.xlsx  ← messages sans date exploitable
+    └── <compte>-unknown.zip
 ```
 
 Les fichiers des archives par année sont organisés de la manière suivante :
@@ -75,11 +75,11 @@ Les fichiers des archives par année sont organisés de la manière suivante :
 
 En cas de conflit de nom (même sujet et même date), les fichiers sont suffixées `_1`, `_2`, …
 
-Le classeur global `output\<compte>\index.xlsx` et les classeurs annuels
-`output\<compte>\<année>.xlsx` (une feuille, ligne d'en-tête figée) s'ouvrent
-directement dans Excel et contiennent une ligne par message. Les classeurs
-annuels ont exactement les mêmes colonnes que l'index global, filtrées sur
-l'année.
+Le classeur global `output\<compte>\<compte>.xlsx` et les classeurs annuels
+`output\<compte>\<compte>-<année>.xlsx` (une feuille, ligne d'en-tête figée)
+s'ouvrent directement dans Excel et contiennent une ligne par message. Les
+classeurs annuels ont exactement les mêmes colonnes que l'index global, filtrées
+sur l'année.
 
 | Colonne             | Contenu                                                           |
 |---------------------|-------------------------------------------------------------------|

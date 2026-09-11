@@ -15,10 +15,11 @@ The script:
 4. writes each message as an ``.eml`` file into
    ``output/<base>/<year>/<mail folder hierarchy>/<YYYYMMDD-HHMMSS>_<subject>.eml``
    -- mailbox name, then message year, then the archive's own folder tree --
-   and appends a row both to the global ``output/<base>/index.xlsx`` and to a
-   per-year ``output/<base>/<year>.xlsx`` (same columns);
-5. finally packs each ``output/<base>/<year>/`` tree into ``output/<base>/<year>.zip``
-   and removes the original directory (the ``.xlsx`` files are kept as-is).
+   and appends a row both to the global ``output/<base>/<base>.xlsx`` and to a
+   per-year ``output/<base>/<base>-<year>.xlsx`` (same columns);
+5. finally packs each ``output/<base>/<year>/`` tree into
+   ``output/<base>/<base>-<year>.zip`` and removes the original directory (the
+   ``.xlsx`` files are kept as-is).
 
 Python 3.13. Third-party dependencies: ``packaging``, ``XlsxWriter``.
 """
@@ -359,7 +360,7 @@ def robust_rmtree(path: Path, *, retries: int = 5, delay: float = 0.5) -> None:
 
 def rmtree_interactive(path: Path) -> None:
     """Like ``robust_rmtree`` but, when a file is still held open by another
-    application (typically ``index.xlsx`` open in Excel), keep asking the user to
+    application (typically ``<base>.xlsx`` open in Excel), keep asking the user to
     close it and retry until the tree can be removed."""
     while path.exists():
         try:
@@ -374,12 +375,12 @@ def rmtree_interactive(path: Path) -> None:
                 raise SystemExit(f"aborted: {locked} is still locked")
 
 
-def zip_year_dirs(base_dir: Path) -> None:
+def zip_year_dirs(base_dir: Path, base: str) -> None:
     """Pack each ``<year>/`` subtree of ``base_dir`` into a sibling
-    ``<year>.zip`` (paths inside the zip keep the ``<year>/`` prefix), then
-    remove the original directory. The ``.xlsx`` files are left untouched."""
+    ``<base>-<year>.zip`` (paths inside the zip keep the ``<year>/`` prefix),
+    then remove the original directory. The ``.xlsx`` files are left untouched."""
     for ydir in sorted(p for p in base_dir.iterdir() if p.is_dir()):
-        zpath = base_dir / f"{ydir.name}.zip"
+        zpath = base_dir / f"{base}-{ydir.name}.zip"
         files = sorted(f for f in ydir.rglob("*") if f.is_file())
         print(f"compressing {ydir.name}/ ({len(files)} file(s)) -> {zpath.name}")
         with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -407,7 +408,7 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
         print(f"clearing previous output: {base_dir}")
         rmtree_interactive(base_dir)
     base_dir.mkdir(parents=True, exist_ok=True)
-    index_path = base_dir / "index.xlsx"
+    index_path = base_dir / f"{base}.xlsx"
     made_dirs: set[Path] = set()
 
     mode: Literal["r|", "r|gz"] = "r|" if archive.suffix == ".tar" else "r|gz"
@@ -418,8 +419,9 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
 
     columns = ["year", "folder", "date", "subject",
                "from", "to", "cc", "bcc", "output_file"]
-    # the global index.xlsx, plus one <year>.xlsx per year written alongside the
-    # <year>.zip files (created lazily, same columns, finalised by the ExitStack)
+    # the global <base>.xlsx, plus one <base>-<year>.xlsx per year written
+    # alongside the <base>-<year>.zip files (created lazily, same columns,
+    # finalised by the ExitStack)
     tables: dict[str, _XlsxTable] = {}
 
     with contextlib.ExitStack() as sheets:
@@ -470,7 +472,7 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
                             table = tables.get(year)
                             if table is None:
                                 table = _XlsxTable(
-                                    base_dir / f"{year}.xlsx", columns
+                                    base_dir / f"{base}-{year}.xlsx", columns
                                 )
                                 tables[year] = table
                                 sheets.callback(table.close)
@@ -492,7 +494,7 @@ def process(base: str, archives_dir: Path, tmp_dir: Path, output_dir: Path,
     except OSError as exc:
         print(f"warning: could not fully remove {extract_root}: {exc}")
 
-    zip_year_dirs(base_dir)
+    zip_year_dirs(base_dir, base)
 
     print(f"\ndone: {total} message(s) -> {base_dir} "
           f"({no_date} without a usable date)")
